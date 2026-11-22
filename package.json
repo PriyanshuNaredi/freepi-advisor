@@ -1,0 +1,17 @@
+{
+	"name": "freepi-advisor",
+	"version": "1.0.0",
+	"description": "/advisor extension for free-pi: a second opinion from a stronger model without switching the session's model",
+	"type": "module",
+	"license": "MIT",
+	"author": "Priyanshu Naredi",
+	"keywords": ["free-pi", "pi", "extension", "advisor", "llm", "coding-agent"],
+	"engines": {
+		"node": ">=18"
+	},
+	"scripts": {
+		"install-extension": "node install.mjs",
+		"test": "node tests/run.mjs"
+	},
+	"files": ["advisor.ts", "install.mjs", "README.md", "LICENSE"]
+}
