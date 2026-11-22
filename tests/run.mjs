@@ -167,8 +167,8 @@ const server = createServer(async (request, response) => {
 		response.end(
 			JSON.stringify(
 				request.url.endsWith("/messages")
-					? { content: [{ type: "text", text: "endpoint anthropic advice" }] }
-					: { choices: [{ message: { content: "endpoint openai advice" } }] },
+					? { model: "arena-echo", content: [{ type: "text", text: "endpoint anthropic advice" }] }
+					: { model: "arena-echo", choices: [{ message: { content: "endpoint openai advice" } }] },
 			),
 		);
 		return;
@@ -286,6 +286,9 @@ try {
 		check("endpoint call sends the bearer token", request?.auth === "Bearer endpoint-secret", request?.auth);
 		check("endpoint call sends the chosen model", request?.body?.model === "arena-small", JSON.stringify(request?.body?.model));
 		check("endpoint advice is delivered", call.messages[0]?.content?.includes("endpoint openai advice"));
+		check("a substituted model is reported", call.messages[0]?.content?.includes("served as arena-echo"), call.messages[0]?.content?.slice(0, 90));
+		check("substitution is also a warning", call.notices.some((n) => n.startsWith("warning") && n.includes("different model")), call.notices.join("|"));
+		check("system prompt forbids identity guessing", String(request?.body?.messages?.[0]?.content ?? "").includes("Do not speculate about which model"));
 
 		const defaultCall = await run(state, context, "");
 		check("endpoint is not default unless configured", defaultCall.used === "free-pi/gpt-6.2-astra", defaultCall.used);

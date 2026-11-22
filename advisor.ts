@@ -53,6 +53,7 @@ const SYSTEM_PROMPT = [
 	"2. What is missing: checks, edge cases, tests, or evidence the agent claims but has not shown.",
 	"3. The single next action you would take, as an exact command or edit.",
 	"Be blunt and specific. Never restate the transcript, never praise, no preamble. Stay under 400 words unless the problem genuinely needs more.",
+	"Do not speculate about which model, version or vendor you are; you are the advisor in this session.",
 ].join("\n");
 
 type AnyMessage = { role?: string; content?: unknown; toolName?: string };
@@ -240,7 +241,7 @@ async function callEndpoint(
 	modelId: string,
 	prompt: string,
 	signal?: AbortSignal,
-): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; text: string; served?: string } | { ok: false; error: string }> {
 	try {
 		const anthropic = endpoint.api === "anthropic-messages";
 		const response = await fetch(anthropic ? `${endpoint.baseUrl}/messages` : `${endpoint.baseUrl}/chat/completions`, {
@@ -272,7 +273,8 @@ async function callEndpoint(
 					? body.choices[0].message.content
 					: flattenContent(body?.choices?.[0]?.message?.content, 40000));
 		if (!text?.trim()) return { ok: false, error: `Endpoint returned no text: ${clip(bodyText, 300)}` };
-		return { ok: true, text: String(text).trim() };
+		const served = String(body?.model ?? body?.choices?.[0]?.model ?? "").trim();
+		return { ok: true, text: String(text).trim(), served: served || undefined };
 	} catch (error) {
 		return { ok: false, error: `Endpoint request failed: ${error instanceof Error ? error.message : String(error)}` };
 	}
@@ -508,7 +510,8 @@ export default function advisorExtension(pi: ExtensionAPI) {
 		if (endpoint && resolved.model.provider === endpoint.provider) {
 			const outcome = await callEndpoint(endpoint, String(resolved.model.id), buildPrompt(transcript, focus, ctx.cwd), signal ?? ctx.signal);
 			if (!outcome.ok) return { ok: false, error: outcome.error };
-			return { ok: true, text: outcome.text, label: resolved.label };
+			const substituted = outcome.served && normalizeId(outcome.served) !== normalizeId(String(resolved.model.id));
+			return { ok: true, text: outcome.text, label: substituted ? `${resolved.label} · served as ${outcome.served}` : resolved.label };
 		}
 
 		const key = ownKey();
@@ -669,6 +672,9 @@ export default function advisorExtension(pi: ExtensionAPI) {
 			if (!result.ok) {
 				ctx.ui.notify(result.error, "error");
 				return;
+			}
+			if (result.label.includes(" · served as ")) {
+				ctx.ui.notify(`The endpoint answered with a different model (${result.label}); routing is on the provider's side.`, "warning");
 			}
 			pi.sendMessage(
 				{ customType: "advisor", content: `**Advisor · ${result.label}**\n\n${result.text}`, display: true },

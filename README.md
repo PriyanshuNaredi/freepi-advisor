@@ -229,7 +229,7 @@ On Windows, use `setx ADVISOR_MODEL gpt-6.1-sol` to make it permanent (new termi
 
 One request, two messages, no tools, no streaming:
 
-1. A system prompt: senior reviewer, no tools, short blunt critique — what is wrong or unverified, what is missing, the single next action.
+1. A system prompt: senior reviewer, no tools, short blunt critique — what is wrong or unverified, what is missing, the single next action. It also tells the model not to speculate about its own identity or version, so an advisor cannot derail a review by guessing which model it is.
 2. The transcript, rendered as `## user`, `## assistant`, `## tool result (edit)` sections, with tool calls inline as `[tool call edit {"path":"a.ts"}]`. Thinking blocks are dropped, tool output is truncated, and the whole thing is capped by `ADVISOR_MAX_CHARS` from the newest end.
 
 So: **the transcript leaves your machine** and goes to whichever provider answers. Pick your advisor accordingly, and prefer endpoints you trust.
@@ -253,7 +253,7 @@ Tested on macOS with free-pi; the code avoids platform APIs, but Windows and Lin
 node tests/run.mjs        # or: npm test
 ```
 
-56 headless checks, no network and no real API calls: registration, default/fallback resolution, per-call and pinned models, empty-session behaviour, error paths, own-key plumbing, both endpoint wire formats against a local stub server (auth headers and request bodies included), config-file loading, transcript capping, odd transcript entries, tool success/failure, and Tab completion.
+59 headless checks, no network and no real API calls: registration, default/fallback resolution, per-call and pinned models, empty-session behaviour, error paths, own-key plumbing, both endpoint wire formats against a local stub server (auth headers and request bodies included), config-file loading, transcript capping, odd transcript entries, tool success/failure, and Tab completion.
 
 The script loads the extension through pi's own jiti setup, so imports match production. It needs the free-pi (or pi) package for `typebox`; it auto-discovers `~/.npm/_npx/*/node_modules/free-pi-cli`, and you can point it anywhere with:
 
@@ -273,6 +273,7 @@ PI_PKG_DIR=/path/to/free-pi-cli/node_modules node tests/run.mjs
 | Footer reads `advisor: none` | No usable advisor. Set `ADVISOR_MODEL`, or provide `ADVISOR_API_KEY`, or enable an endpoint. |
 | Endpoint configured but ignored | `apiKey` is empty in `advisor-endpoint.json`, or the file is not valid JSON (`node -e "JSON.parse(require('fs').readFileSync(process.argv[1]))" <file>`). |
 | `401`/`403` from an endpoint | Wrong wire format: switch `api` between `openai-completions` and `anthropic-messages`. |
+| Advisor insists it is some other model or vendor | The endpoint substituted a model for the id you asked for. When the response reports a different `model`, the advice header says `served as <id>` and a warning is shown. Nothing to fix here — routing is on the provider's side. |
 | Advice looks truncated | Raise `ADVISOR_MAX_TOKENS`; lower `ADVISOR_MAX_CHARS` if the request is too big. |
 | A `FREEPI_BYO` / origin error appears | That is free-pi's own BYO guard. Use the advisor's `ADVISOR_API_KEY` path instead, which passes the key per request. |
 
