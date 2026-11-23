@@ -12,10 +12,11 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const here = resolve(import.meta.dirname ?? new URL(".", import.meta.url).pathname);
+const here = resolve(import.meta.dirname ?? fileURLToPath(new URL(".", import.meta.url)));
 const extensionPath = join(here, "..", "advisor.ts");
 
 let passed = 0;
@@ -38,11 +39,20 @@ function section(title) {
 /** Find a node_modules dir that can satisfy `typebox`. */
 function locatePiModules() {
 	const explicit = process.env.PI_PKG_DIR;
-	if (explicit && existsSync(join(explicit, "typebox"))) return explicit;
+	if (explicit) {
+		for (const candidate of [explicit, join(explicit, "node_modules")]) {
+			if (existsSync(join(candidate, "typebox"))) return candidate;
+		}
+	}
 
 	const candidates = [];
-	const npxRoot = join(homedir(), ".npm", "_npx");
-	if (existsSync(npxRoot)) {
+	const npxRoots = [join(homedir(), ".npm", "_npx")];
+	// Windows keeps the npx cache outside the home directory.
+	for (const env of ["LOCALAPPDATA", "APPDATA"]) {
+		if (process.env[env]) npxRoots.push(join(process.env[env], "npm-cache", "_npx"));
+	}
+	for (const npxRoot of npxRoots) {
+		if (!existsSync(npxRoot)) continue;
 		for (const entry of readdirSync(npxRoot)) candidates.push(join(npxRoot, entry, "node_modules", "free-pi-cli", "node_modules"));
 	}
 	candidates.push(join(homedir(), ".npm-global", "lib", "node_modules", "free-pi-cli", "node_modules"));
@@ -57,7 +67,10 @@ if (!existsSync(join(modulesDir, "typebox")) || !existsSync(piPackage)) {
 	process.exit(2);
 }
 
-const workDir = mkdtempSync(join(process.env.HOME, ".hermes", "cache", "scratch", "advisor-test-"));
+// The OS temp dir always exists; an absent scratch root is what broke Windows runs.
+const scratchRoot = process.env.PI_TEST_SCRATCH ?? join(tmpdir(), "advisor-tests");
+mkdirSync(scratchRoot, { recursive: true });
+const workDir = mkdtempSync(join(scratchRoot, "run-"));
 const agentDir = join(workDir, "agent");
 mkdirSync(agentDir, { recursive: true });
 
@@ -79,7 +92,8 @@ for (const key of ["ADVISOR_MODEL", "ADVISOR_FALLBACKS", "ADVISOR_API_KEY", "ADV
 }
 
 const jitiUrl = join(piPackage, "node_modules", "jiti", "lib", "jiti.mjs");
-const { createJiti } = await import(jitiUrl);
+// A bare Windows path (C:\...) is not a valid ESM specifier; a file URL is.
+const { createJiti } = await import(pathToFileURL(jitiUrl).href);
 const register = (await createJiti(import.meta.url).import(join(sandbox, "advisor.ts"))).default;
 
 /** Fresh extension instance, collecting UI and messages. */
