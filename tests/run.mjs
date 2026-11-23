@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 const here = resolve(import.meta.dirname ?? new URL(".", import.meta.url).pathname);
@@ -57,7 +57,7 @@ if (!existsSync(join(modulesDir, "typebox")) || !existsSync(piPackage)) {
 	process.exit(2);
 }
 
-const workDir = mkdtempSync(join(tmpdir(), "advisor-test-"));
+const workDir = mkdtempSync(join(process.env.HOME, ".hermes", "cache", "scratch", "advisor-test-"));
 const agentDir = join(workDir, "agent");
 mkdirSync(agentDir, { recursive: true });
 
@@ -73,6 +73,7 @@ if (existsSync(join(modulesDir, "@earendil-works", "pi-ai"))) {
 }
 
 process.env.PI_CODING_AGENT_DIR = agentDir;
+writeFileSync(join(agentDir, "advisor-settings.json"), JSON.stringify({ mode: "suggest" }));
 for (const key of ["ADVISOR_MODEL", "ADVISOR_FALLBACKS", "ADVISOR_API_KEY", "ADVISOR_API_KEY_PROVIDER", "ADVISOR_BASE_URL", "ADVISOR_ENDPOINT_MODEL", "ADVISOR_ENDPOINT_API", "ADVISOR_ENDPOINT_PROVIDER", "ADVISOR_ENDPOINT_DEFAULT"]) {
 	delete process.env[key];
 }
@@ -195,7 +196,7 @@ try {
 		const state = load();
 		const context = makeContext([FREE_ASTRA, FREE_SOL, DEEPSEEK]);
 		state.handlers.session_start({}, context);
-		check("footer names the free astra model", context.__status.advisor === "advisor: 6.2 astra", context.__status.advisor);
+		check("footer names the free astra model", context.__status.advisor === "advisor: 6.2 astra · mode: suggest", context.__status.advisor);
 		const result = await run(state, context, "");
 		check("review uses free-pi/gpt-6.2-astra", result.used === "free-pi/gpt-6.2-astra", result.used);
 		check("prompt carries the transcript", result.prompt.includes("add retries to the uploader"));
@@ -365,7 +366,7 @@ try {
 		check("thinking blocks are not sent", !result.prompt.includes("hidden"));
 	}
 
-	section("tool");
+	section("tool and proactive policy");
 	{
 		const state = load();
 		const context = makeContext([FREE_ASTRA, FREE_SOL]);
@@ -375,6 +376,43 @@ try {
 		const failing = makeContext([FREE_ASTRA], { fail: "429 slow down" });
 		const failed = await state.tools.ask_advisor.execute("call-2", { question: "safe?" }, undefined, undefined, failing);
 		check("tool reports failures as errors", failed.isError === true);
+		const guidance = state.tools.ask_advisor.promptGuidelines.join(" ").toLowerCase();
+		check("agent guidance covers repeated failures", guidance.includes("two attempts"));
+		check("agent guidance covers consequential choices", guidance.includes("hard to reverse"));
+		check("agent guidance asks before claiming completion", guidance.includes("before claiming the task is done"));
+		check("agent is told not to wait for user invocation", guidance.includes("do not wait for the user"));
+
+		const fresh = load();
+		const reviewContext = makeContext([FREE_ASTRA, FREE_SOL]);
+		fresh.handlers.session_start({}, reviewContext);
+		check("policy command is registered", Boolean(fresh.commands.advisor));
+		await fresh.commands.advisor.handler("mode", reviewContext);
+		check("mode command reports current mode", reviewContext.__notices.at(-1)?.includes("Advisor mode: suggest"));
+		await fresh.commands.advisor.handler("mode review", reviewContext);
+		check("review mode can be enabled", reviewContext.__notices.at(-1)?.includes("Advisor mode set to review"));
+		const reloaded = load();
+		await reloaded.handlers.session_start({}, reviewContext);
+		check("review mode persists across extension reload", reviewContext.__status.advisor?.includes("mode: review"));
+		fresh.handlers.before_agent_start({ messageType: "user", prompt: "Implement the change" }, reviewContext);
+		fresh.handlers.tool_execution_end({ toolName: "edit", isError: false }, reviewContext);
+		const boundary = { outcome: "completed", entries: [], continue: false, context: { contextEntries: [], contextMessages: [], llmMessages: [], pendingMessages: [], canContinue: true } };
+		const review = await fresh.handlers.agent_before_settle(boundary, reviewContext);
+		check("review mode appends advisor feedback", review?.entries?.[0]?.content?.includes("Advisor review ("));
+		check("review mode requests one continuation", review?.continue === true);
+		check("review feedback is visible in the session", review?.entries?.[0]?.display === true);
+		check("review is bounded to one per request", await fresh.handlers.agent_before_settle(boundary, reviewContext) === undefined);
+
+		fresh.handlers.before_agent_start({ messageType: "user", prompt: "A new task" }, reviewContext);
+		const noWork = await fresh.handlers.agent_before_settle(boundary, reviewContext);
+		check("review mode skips requests with no tool work", noWork === undefined);
+		fresh.handlers.tool_execution_end({ toolName: "edit", isError: false }, reviewContext);
+		check("aborted request skips automatic review", await fresh.handlers.agent_before_settle({ ...boundary, outcome: "aborted" }, reviewContext) === undefined);
+
+		await fresh.commands.advisor.handler("mode off", reviewContext);
+		const disabled = await fresh.tools.ask_advisor.execute("call-off", { question: "help" }, undefined, undefined, reviewContext);
+		check("off mode blocks model-invoked advisor calls", disabled.isError === true && disabled.content?.[0]?.text.includes("disabled"));
+		const manual = await run(fresh, reviewContext, "help");
+		check("off mode keeps the manual command available", manual.used === "free-pi/gpt-6.2-astra");
 	}
 
 	section("completion");

@@ -11,7 +11,8 @@ You (deepseek-v4.1-flash) ──works──> files, commands, tests
 ```
 
 - **Non-invasive** — the advisor never touches your session model, history or tools.
-- **Two ways to use it** — you ask (`/advisor did I miss anything?`), or the agent asks itself (the `ask_advisor` tool).
+- **Two ways to use it** — you ask (`/advisor did I miss anything?`), or the agent asks itself (`ask_advisor`). Proactive calls are encouraged for consequential uncertainty, repeated failures, and unverified completion claims.
+- **Review policies** — `/advisor mode suggest` (default) leaves invocation to the agent; `/advisor mode review` adds one opt-in final review after tool work; `/advisor mode off` disables model-initiated calls. The manual `/advisor` command remains available in every mode.
 - **Model choice** — automatic (free-tier `gpt-6.2-astra` first), per-call (`/advisor @gpt-6.1-sol …`), or pinned for the session (`/advisor use …`).
 - **Bring your own key** — `openai`, `openrouter`, `anthropic` or any OpenAI/Anthropic-compatible endpoint (Coarena, LiteLLM, vLLM, a proxy…), configured only for the advisor.
 - **No dependencies** — one TypeScript file, `node:fs`/`fetch` only, no build step.
@@ -82,12 +83,16 @@ The answer comes back as an advisor message in the transcript, so the main model
 | `/advisor -m <provider>/<id> [question]` | Same, with an explicit provider, e.g. `-m openai/gpt-6.2-astra`. |
 | `/advisor use <model>` | Pin the advisor for this session. Alias: `/advisor set <model>`. |
 | `/advisor use default` | Drop the pin and go back to the automatic choice. |
+| `/advisor mode` | Show the persisted advisor policy. |
+| `/advisor mode off|suggest|review` | Set policy: disable model tool calls, agent-initiated calls only, or one final review after work. |
 | `/advisor model` | Show which advisor is in use and why. |
 | `/advisor key` | Explain how to give the advisor its own API key. |
 | `/advisor endpoint` | Show the third-party endpoint config (never the key). |
 | `/advisor models` | List model ids available on that endpoint. |
 
 `Tab` completes everything above, including model ids after `use`, `set`, `@` and `-m`.
+
+`/advisor mode` stores the selection in `<agent dir>/advisor-settings.json`. `suggest` is deliberately low-impact: the agent receives stronger `ask_advisor` triggers but no automatic provider call. `review` uses the `agent_before_settle` hook, skips aborted turns and requests with no tool activity, and makes at most one review call per user request. The review is shown to the base model as untrusted advice and it gets one bounded continuation to respond to it. Manual `/advisor` remains available in every mode.
 
 ### Tool: `ask_advisor`
 
@@ -116,7 +121,7 @@ A model counts as *usable* only when free-pi serves it or you have credentials f
 The footer shows the result:
 
 ```
-advisor: 6.2 astra
+advisor: 6.2 astra · mode: suggest
 advisor: claude opus 5.5 (coarena) · pinned
 advisor: 6.2 astra · your key
 advisor: none            # nothing usable; set ADVISOR_MODEL or a key
