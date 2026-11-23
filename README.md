@@ -198,8 +198,36 @@ or a JSON file `<agent dir>/advisor-endpoint.json`:
 - `default: false` ⇒ free-tier models still win unless you name the endpoint (`@coarena/<id>`) or pin it (`/advisor use coarena/<id>`). Set `true` to make it the default advisor.
 - `api` picks the wire format: `openai-completions` sends `Authorization: Bearer …` to `<baseUrl>/chat/completions`; `anthropic-messages` sends `x-api-key` + `anthropic-version: 2023-06-01` to `<baseUrl>/messages`.
 - `/advisor models` calls `GET <baseUrl>/models` and lists ids, so you can copy one into `model`.
+- A model your plan may not call answers `HTTP 402 Payment Required`, with the account's allowed ids in the body. Coarena's free tier is `gpt-6-luna`, `gemini-3-8-flash` and `deepseek-v4-1-flash-1017`; everything else in its catalogue is paid. Test one with `/advisor @coarena/<id> …` or `node coarena-setup.mjs --probe` if you use the helper in [Main session on the same endpoint](#main-session-on-the-same-endpoint-optional).
 
 Keep the file private (`chmod 600` on macOS/Linux; `icacls` on Windows). It is in `.gitignore` here for a reason.
+
+---
+
+## Main session on the same endpoint (optional)
+
+The advisor's `advisor-endpoint.json` only affects the advisor. To run the *main* session on that endpoint too, add a provider to `<agent dir>/models.json` — that file belongs to pi/free-pi, not to this extension:
+
+```json
+{
+  "providers": {
+    "coarena": {
+      "baseUrl": "https://coarena.ai/api/v1",
+      "api": "openai-completions",
+      "apiKey": "…",
+      "models": [
+        { "id": "gpt-6-luna", "name": "GPT-6 Luna", "reasoning": true, "contextWindow": 1050000, "maxTokens": 128000 }
+      ]
+    }
+  }
+}
+```
+
+- `apiKey` **must not be empty**. pi validates the whole file and drops every provider on a schema error (`providers.coarena.apiKey: must not have fewer than 1 characters`), so an empty key there also removes unrelated providers. Write it only once you have the key.
+- List only ids your plan can call: the picker would otherwise offer models that answer `HTTP 402`.
+- `provider` becomes the prefix in `/model` (`coarena/gpt-6-luna`) and in `/advisor use coarena/<id>`.
+- The session model and the advisor model are independent; pinning the session to `coarena/deepseek-v4-1-flash-1017` with the advisor on `coarena/gpt-6-luna` is a good free-tier pair.
+- Restart free-pi, then `/model`. free-pi remembers the choice; `/advisor model` shows the advisor's.
 
 ---
 
@@ -247,6 +275,8 @@ So: **the transcript leaves your machine** and goes to whichever provider answer
 - `fetch` needs Node ≥ 18 — same requirement as free-pi.
 - The only OS-specific text is the `/advisor key` hint, which omits `chmod` on Windows.
 - `install.mjs` only copies one file and resolves the agent directory with `os.homedir()`.
+- Windows PowerShell 5.1 has no `&&` and no `$USERPROFILE`; use `cd "$env:USERPROFILE\.free-pi\agent"; node coarena-setup.mjs` or cmd.exe's `cd /d "%USERPROFILE%\.free-pi\agent" && …`.
+- The npx cache lives under `%LOCALAPPDATA%\npm-cache\_npx` on Windows, which is why `tests/run.mjs` looks there in addition to `~/.npm/_npx`.
 
 Tested on macOS with free-pi; the code avoids platform APIs, but Windows and Linux have not been run by the author. Reports welcome.
 
@@ -258,9 +288,9 @@ Tested on macOS with free-pi; the code avoids platform APIs, but Windows and Lin
 node tests/run.mjs        # or: npm test
 ```
 
-59 headless checks, no network and no real API calls: registration, default/fallback resolution, per-call and pinned models, empty-session behaviour, error paths, own-key plumbing, both endpoint wire formats against a local stub server (auth headers and request bodies included), config-file loading, transcript capping, odd transcript entries, tool success/failure, and Tab completion.
+75 headless checks, no network and no real API calls: registration, default/fallback resolution, per-call and pinned models, empty-session behaviour, error paths, own-key plumbing, both endpoint wire formats against a local stub server (auth headers and request bodies included), config-file loading, transcript capping, odd transcript entries, tool success/failure, and Tab completion.
 
-The script loads the extension through pi's own jiti setup, so imports match production. It needs the free-pi (or pi) package for `typebox`; it auto-discovers `~/.npm/_npx/*/node_modules/free-pi-cli`, and you can point it anywhere with:
+The script loads the extension through pi's own jiti setup, so imports match production. It needs the free-pi (or pi) package for `typebox`; it auto-discovers `~/.npm/_npx/*/node_modules/free-pi-cli` and the Windows `%LOCALAPPDATA%\npm-cache\_npx` equivalent, and you can point it anywhere with:
 
 ```bash
 PI_PKG_DIR=/path/to/free-pi-cli/node_modules node tests/run.mjs
@@ -278,6 +308,8 @@ PI_PKG_DIR=/path/to/free-pi-cli/node_modules node tests/run.mjs
 | Footer reads `advisor: none` | No usable advisor. Set `ADVISOR_MODEL`, or provide `ADVISOR_API_KEY`, or enable an endpoint. |
 | Endpoint configured but ignored | `apiKey` is empty in `advisor-endpoint.json`, or the file is not valid JSON (`node -e "JSON.parse(require('fs').readFileSync(process.argv[1]))" <file>`). |
 | `401`/`403` from an endpoint | Wrong wire format: switch `api` between `openai-completions` and `anthropic-messages`. |
+| `HTTP 402 Payment Required` from an endpoint | The model id is not in your plan's tier. The error body lists what is allowed; Coarena's free tier is `gpt-6-luna`, `gemini-3-8-flash`, `deepseek-v4-1-flash-1017`. |
+| `Invalid models.json schema: … apiKey: must not have fewer than 1 characters` | `models.json` has an empty `apiKey`. pi rejects the whole file, so every provider in it disappears. Fill the key or remove that provider. |
 | Advisor insists it is some other model or vendor | The endpoint substituted a model for the id you asked for. When the response reports a different `model`, the advice header says `served as <id>` and a warning is shown. Nothing to fix here — routing is on the provider's side. |
 | Advice looks truncated | Raise `ADVISOR_MAX_TOKENS`; lower `ADVISOR_MAX_CHARS` if the request is too big. |
 | A `FREEPI_BYO` / origin error appears | That is free-pi's own BYO guard. Use the advisor's `ADVISOR_API_KEY` path instead, which passes the key per request. |
